@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hill Climb Racing Clone</title>
+<style>
+/* ======= CSS ======= */
+body {
+  font-family: Arial, sans-serif;
+  background: #87CEEB;
+  margin: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 100vh;
+}
+#loading-screen {
+  text-align: center;
+}
+#game-container {
+  position: relative;
+}
+canvas {
+  border: 2px solid #000;
+  background: linear-gradient(to top, #228B22 0%, #87CEEB 70%);
+  touch-action: none;
+}
+#ui {
+  margin-top: 10px;
+  display: flex;
+  justify-content: space-around;
+  flex-wrap: wrap;
+}
+#ui select, #ui button {
+  padding: 5px;
+  margin-right: 10px;
+}
+</style>
+</head>
+<body>
+<div id="loading-screen">
+  <h2>Loading Game...</h2>
+</div>
+
+<div id="game-container" style="display:none;">
+  <canvas id="gameCanvas" width="900" height="450"></canvas>
+  <div id="ui">
+    <div>
+      Vehicle:
+      <select id="vehicleSelect"></select>
+    </div>
+    <div>
+      Road:
+      <select id="roadSelect"></select>
+    </div>
+    <button id="startBtn">Start Game</button>
+    <p>Score: <span id="score">0</span></p>
+    <p>Fuel: <span id="fuel">100</span></p>
+  </div>
+</div>
+
+<audio id="engineAudio" loop src="sounds/engine.mp3"></audio>
+
+<script>
+/* ======= JS ======= */
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+const vehicleSelect = document.getElementById('vehicleSelect');
+const roadSelect = document.getElementById('roadSelect');
+const startBtn = document.getElementById('startBtn');
+const scoreEl = document.getElementById('score');
+const fuelEl = document.getElementById('fuel');
+const loadingScreen = document.getElementById('loading-screen');
+const gameContainer = document.getElementById('game-container');
+const engineSound = document.getElementById('engineAudio');
+
+const vehicleImages = [
+  { name: "Jeep", img: "sprites/jeep.png", speed: 3, jump: 6 },
+  { name: "Truck", img: "sprites/truck.png", speed: 2, jump: 4 },
+  { name: "Motorbike", img: "sprites/bike.png", speed: 4, jump: 7 },
+  { name: "Car", img: "sprites/car.png", speed: 3, jump: 5 },
+  { name: "Monster Truck", img: "sprites/monster.png", speed: 2, jump: 6 },
+  { name: "Bulldozer", img: "sprites/bulldozer.png", speed: 1.5, jump: 3 },
+  { name: "ATV", img: "sprites/atv.png", speed: 4, jump: 6 },
+  { name: "Go-Kart", img: "sprites/gokart.png", speed: 5, jump: 5 },
+  { name: "Bus", img: "sprites/bus.png", speed: 2, jump: 4 },
+  { name: "Tractor", img: "sprites/tractor.png", speed: 1.8, jump: 3 }
+];
+
+const wheelImg = new Image(); wheelImg.src = "sprites/wheel.png";
+const cloudImg = new Image(); cloudImg.src = "sprites/cloud.png";
+const treeImg = new Image(); treeImg.src = "sprites/tree.png";
+const mountainImg = new Image(); mountainImg.src = "sprites/mountain.png";
+
+const roads = [
+  { name: "Hilly Road", base: 50, amplitude: 40, frequency: 0.01 },
+  { name: "Bumpy Road", base: 80, amplitude: 20, frequency: 0.05 },
+  { name: "Steep Hills", base: 60, amplitude: 50, frequency: 0.008 },
+  { name: "Flat Road", base: 70, amplitude: 5, frequency: 0.02 },
+  { name: "Wavy Road", base: 60, amplitude: 30, frequency: 0.015 },
+  { name: "Mountain Road", base: 50, amplitude: 60, frequency: 0.007 },
+  { name: "Desert Road", base: 70, amplitude: 25, frequency: 0.03 },
+  { name: "Snowy Road", base: 60, amplitude: 30, frequency: 0.02 },
+  { name: "Bridge Road", base: 50, amplitude: 20, frequency: 0.01 },
+  { name: "Crazy Road", base: 50, amplitude: 70, frequency: 0.012 }
+];
+
+// Populate selects
+vehicleImages.forEach((v,i)=>{const opt=document.createElement('option');opt.value=i;opt.textContent=v.name;vehicleSelect.appendChild(opt);});
+roads.forEach((r,i)=>{const opt=document.createElement('option');opt.value=i;opt.textContent=r.name;roadSelect.appendChild(opt);});
+
+// Game variables
+let vehicle, road;
+let posX=100, posY=0, velocityY=0, gravity=0.4, score=0, fuel=100, isPlaying=false;
+let scrollX=0, tilt=0, wheelRotation=0;
+let obstacles=[], fuelPickups=[];
+let particles=[], clouds=[], trees=[], mountains=[];
+let keys={};
+
+window.addEventListener('keydown',e=>keys[e.key]=true);
+window.addEventListener('keyup',e=>keys[e.key]=false);
+
+function getRoadHeight(x){ return road.base + Math.sin(x*road.frequency)*road.amplitude; }
+function generateObstacles(){ const arr=[]; for(let i=500;i<5000;i+=200) arr.push({x:i,width:30,height:30}); return arr; }
+function generateFuelPickups(){ const arr=[]; for(let i=600;i<5000;i+=400) arr.push({x:i,collected:false}); return arr; }
+function addDust(x,y){ particles.push({x,y,alpha:1}); }
+
+function generateBackground(){
+  clouds=[]; trees=[]; mountains=[];
+  for(let i=0;i<10;i++){clouds.push({x:i*300, y:50+Math.random()*50});}
+  for(let i=0;i<20;i++){trees.push({x:i*200, y:canvas.height-80});}
+  for(let i=0;i<5;i++){mountains.push({x:i*500, y:canvas.height-150});}
+}
+
+startBtn.addEventListener('click',()=>{
+  vehicle = vehicleImages[vehicleSelect.value];
+  road = roads[roadSelect.value];
+  posX=100; scrollX=0; score=0; fuel=100; velocityY=0; tilt=0; wheelRotation=0;
+  obstacles = generateObstacles(); fuelPickups = generateFuelPickups();
+  generateBackground();
+  isPlaying=true;
+  loadingScreen.style.display="none";
+  gameContainer.style.display="block";
+  engineSound.play();
+  gameLoop();
+});
+
+function gameLoop(){
+  if(!isPlaying) return;
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  // Background
+  mountains.forEach(m=>{ctx.drawImage(mountainImg,m.x-scrollX*0.2,m.y,100,100);});
+  clouds.forEach(c=>{ctx.drawImage(cloudImg,c.x-scrollX*0.1,c.y,80,50);});
+  trees.forEach(t=>{ctx.drawImage(treeImg,t.x-scrollX*0.5,t.y,40,60);});
+
+  // Scroll & controls
+  let speed=0;
+  if(keys['ArrowRight'] && fuel>0){scrollX+=vehicle.speed; fuel-=0.2; speed=vehicle.speed; addDust(posX+25,posY+30);}
+  if(keys['ArrowLeft']) scrollX-=vehicle.speed;
+
+  // Physics
+  velocityY+=gravity; posY+=velocityY;
+  const groundY=canvas.height-getRoadHeight(scrollX+posX)-50;
+  if(posY>groundY){posY=groundY; velocityY=0;}
+  if(keys['ArrowUp'] && posY>=groundY){velocityY=-vehicle.jump; fuel-=0.5;}
+  tilt=velocityY*0.05; wheelRotation+=vehicle.speed*0.05;
+
+  // Road
+  ctx.beginPath(); ctx.moveTo(0,canvas.height);
+  for(let x=0;x<=canvas.width;x++) ctx.lineTo(x,canvas.height-getRoadHeight(scrollX+x));
+  ctx.lineTo(canvas.width,canvas.height); ctx.lineTo(0,canvas.height); ctx.fillStyle="#654321"; ctx.fill();
+
+  // Obstacles
+  obstacles.forEach(ob=>{
+    const obX=ob.x-scrollX; const obY=canvas.height-getRoadHeight(ob.x)-ob.height;
+    if(obX>-50 && obX<canvas.width+50){ctx.fillStyle="black"; ctx.fillRect(obX,obY,ob.width,ob.height);
+      if(posX+50>obX && posX<obX+ob.width && posY+50>obY){isPlaying=false; engineSound.pause(); alert("Crashed! Score: "+Math.floor(score)); return;}
+    }
+  });
+
+  // Fuel
+  fuelPickups.forEach(f=>{
+    const fx=f.x-scrollX; const fy=canvas.height-getRoadHeight(f.x)-20;
+    if(!f.collected && fx>-50 && fx<canvas.width+50){ctx.fillStyle="gold"; ctx.beginPath(); ctx.arc(fx+10,fy+10,10,0,Math.PI*2); ctx.fill();
+      if(posX+50>fx && posX<fx+20 && posY+50>fy){fuel+=20;if(fuel>100) fuel=100; f.collected=true;}
+    }
+  });
+
+  // Particles
+  particles.forEach((p,i)=>{ctx.fillStyle=`rgba(150,75,0,${p.alpha})`; ctx.fillRect(p.x,p.y,3,3); p.alpha-=0.03; if(p.alpha<=0) particles.splice(i,1);});
+
+  // Vehicle
+  const vehImg = new Image(); vehImg.src=vehicle.img;
+  ctx.save(); ctx.translate(posX+25,posY+25); ctx.rotate(tilt);
+  ctx.drawImage(vehImg,-25,-25,50,50);
+  ctx.save(); ctx.translate(-15,20); ctx.rotate(wheelRotation); ctx.drawImage(wheelImg,-10,-10,20,20); ctx.restore();
+  ctx.save(); ctx.translate(15,20); ctx.rotate(wheelRotation); ctx.drawImage(wheelImg,-10,-10,20,20); ctx.restore();
+  ctx.restore();
+
+  // Score & fuel
+  score+=speed*0.1; scoreEl.textContent=Math.floor(score); fuelEl.textContent=Math.floor(fuel);
+  if(fuel<=0){isPlaying=false; engineSound.pause(); alert("Out of fuel! Score: "+Math.floor(score)); return;}
+  requestAnimationFrame(gameLoop);
+}
+</script>
+</body>
+  </html>
